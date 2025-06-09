@@ -519,3 +519,18 @@ msgstr "Editar filtros"
 msgctxt "#32095"
 msgid "Add new"
 msgstr "Añadir nuevo"
+
+#: /resources/lib/lists/skinusers.py
+msgctxt "#32096"
+msgid "Add new user"
+msgstr "Añadir nuevo usuário"
+
+#: /resources/lib/lists/skinusers.py
+msgctxt "#32097"
+msgid "Enable default user"
+msgstr "Habilitar usuario por defecto"
+
+#: /resources/lib/lists/skinusers.py
+msgctxt "#32098"
+msgid "Disable default user"
+msgstr "Deshabilitar usuario por defecto"

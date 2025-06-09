@@ -4,7 +4,7 @@
 # License: GPL v.3 https://www.gnu.org/copyleft/gpl.html
 from xbmcgui import ListItem, Dialog
 from infotagger.listitem import ListItemInfoTag
-from jurialmunkey.litems import Container
+from jurialmunkey.litems import ContainerDirectory, INFOLABEL_MAP
 from jurialmunkey.window import set_to_windowprop, WindowProperty
 from resources.lib.kodiutils import kodi_log, get_localized
 from resources.lib.filters import get_filters, is_excluded
@@ -24,7 +24,7 @@ DIRECTORY_PROPERTIES_BASIC = ["title", "art", "file", "fanart"]
 DIRECTORY_PROPERTIES_VIDEO = [
     "genre", "year", "rating", "playcount", "director", "trailer", "tagline", "plot", "plotoutline", "originaltitle", "lastplayed", "writer",
     "studio", "mpaa", "country", "premiered", "runtime", "set", "streamdetails", "top250", "votes", "firstaired", "season", "episode", "showtitle",
-    "tvshowid", "setid", "sorttitle", "thumbnail", "uniqueid", "dateadded", "customproperties"]
+    "tvshowid", "setid", "sorttitle", "thumbnail", "uniqueid", "dateadded", "resume", "customproperties"]
 
 DIRECTORY_PROPERTIES_MUSIC = [
     "artist", "albumartist", "genre", "year", "rating", "album", "track", "duration", "lastplayed", "studio", "mpaa",
@@ -45,59 +45,6 @@ STANDARD_OPERATORS = (
     ('gt', 32041))
 
 
-def update_global_property_versions():
-    """ Add additional properties from newer versions of JSON RPC """
-
-    from jurialmunkey.jsnrpc import get_jsonrpc
-
-    response = get_jsonrpc("JSONRPC.Version")
-    version = (
-        response['result']['version']['major'],
-        response['result']['version']['minor'],
-        response['result']['version']['patch'],
-    )
-
-    if version >= (13, 3, 0):
-        DIRECTORY_PROPERTIES_MUSIC.append('songvideourl')  # Added in 13.3.0 of JSON RPC
-
-
-INFOLABEL_MAP = {
-    "title": "title",
-    "artist": "artist",
-    "albumartist": "albumartist",
-    "genre": "genre",
-    "year": "year",
-    "rating": "rating",
-    "album": "album",
-    "track": "tracknumber",
-    "duration": "duration",
-    "playcount": "playcount",
-    "director": "director",
-    "trailer": "trailer",
-    "tagline": "tagline",
-    "plot": "plot",
-    "plotoutline": "plotoutline",
-    "originaltitle": "originaltitle",
-    "lastplayed": "lastplayed",
-    "writer": "writer",
-    "studio": "studio",
-    "mpaa": "mpaa",
-    "country": "country",
-    "premiered": "premiered",
-    "set": "set",
-    "top250": "top250",
-    "votes": "votes",
-    "firstaired": "aired",
-    "season": "season",
-    "episode": "episode",
-    "showtitle": "tvshowtitle",
-    "sorttitle": "sorttitle",
-    "episodeguide": "episodeguide",
-    "dateadded": "date",
-    "id": "dbid",
-    "songvideourl": "songvideourl",
-}
-
 INFOPROPERTY_MAP = {
     "disctitle": "disctitle",
     "releasedate": "releasedate",
@@ -117,6 +64,22 @@ INFOPROPERTY_MAP = {
     "setid": "set.dbid",
     "songvideourl": "songvideourl",
 }
+
+
+def update_global_property_versions():
+    """ Add additional properties from newer versions of JSON RPC """
+
+    from jurialmunkey.jsnrpc import get_jsonrpc
+
+    response = get_jsonrpc("JSONRPC.Version")
+    version = (
+        response['result']['version']['major'],
+        response['result']['version']['minor'],
+        response['result']['version']['patch'],
+    )
+
+    if version >= (13, 3, 0):
+        DIRECTORY_PROPERTIES_MUSIC.append('songvideourl')  # Added in 13.3.0 of JSON RPC
 
 
 class MetaItemJSONRPC():
@@ -153,6 +116,17 @@ class MetaItemJSONRPC():
     def infoproperties(self):
         infoproperties = {INFOPROPERTY_MAP[k]: str(v) for k, v in self.meta.items() if v and k in INFOPROPERTY_MAP and v != -1}
         infoproperties.update({k: str(v) for k, v in (self.meta.get('customproperties') or {}).items()})
+        infoproperties.update(self.resume)
+        return infoproperties
+
+    @property
+    def resume(self):
+        resume = self.meta.get('resume') or {}
+        infoproperties = {}
+        if resume.get('total'):
+            infoproperties['resumetime'] = resume.get('position') or 0
+            infoproperties['totaltime'] = resume.get('total')
+            infoproperties['percentplayed'] = int(infoproperties['resumetime'] / infoproperties['totaltime'] * 100)
         return infoproperties
 
     @property
@@ -280,12 +254,13 @@ class ListItemJSONRPC():
         if self.library == 'video':
             self._info_tag.set_unique_ids(self.uniqueids)
             self._info_tag.set_stream_details(self.streamdetails)
+            self._info_tag.set_resume_point(self.infoproperties, resume_key='resumetime', total_key='totaltime')
 
         self._listitem.setProperties(self.infoproperties)
         return self._listitem
 
 
-class ListGetFilterFiles(Container):
+class ListGetFilterFiles(ContainerDirectory):
     def get_directory(self, filepath=None, **kwargs):
         from resources.lib.shortcuts.futils import get_files_in_folder
 
@@ -512,7 +487,7 @@ class MetaFilterDir():
             dump(self.meta, file, indent=4)
 
 
-class ListSetFilterDir(Container):
+class ListSetFilterDir(ContainerDirectory):
     def get_directory(self, library='video', filename=None, filepath=None, **kwargs):
         meta_filter_dir = MetaFilterDir(library=library, filepath=filepath)
 
@@ -631,8 +606,13 @@ class ListSetFilterDir(Container):
         get_new() if not filepath else do_edit()
 
 
-class ListGetFilterDir(Container):
-    def get_directory(self, paths=None, library=None, no_label_dupes=False, dbtype=None, sort_by=None, sort_how=None, randomise=False, fallback=False, names=None, **kwargs):
+class ListGetFilterDir(ContainerDirectory):
+    def get_directory(
+            self, paths=None, library=None, no_label_dupes=False, dbtype=None,
+            sort_by=None, sort_how=None, randomise=False, randomise_prop=None, randomise_time=None, fallback=False, names=None,
+            window_prop=None, window_id=None,
+            **kwargs
+    ):
         if not paths:
             return
 
@@ -644,10 +624,13 @@ class ListGetFilterDir(Container):
         mediatypes = {}
         added_items = []
         all_filters = get_filters(**kwargs)
+        all_statistics_filters = get_filters(filter_prefix='stats_', **kwargs)
         directory_properties = DIRECTORY_PROPERTIES_BASIC
         directory_properties += {
             'video': DIRECTORY_PROPERTIES_VIDEO,
             'music': DIRECTORY_PROPERTIES_MUSIC}.get(library) or []
+
+        statistics = {}
 
         def _make_item(i, path_name=None):
             if not i:
@@ -657,9 +640,14 @@ class ListGetFilterDir(Container):
             listitem_jsonrpc.infolabels['title'] = listitem_jsonrpc.label
             listitem_jsonrpc.infoproperties['widget'] = path_name or listitem_jsonrpc.infoproperties.get('widget') or ''
 
-            for _, filters in all_filters.items():
+            for fname, filters in all_filters.items():
                 if is_excluded({'infolabels': listitem_jsonrpc.infolabels, 'infoproperties': listitem_jsonrpc.infoproperties}, **filters):
                     return
+
+            for fname, filters in all_statistics_filters.items():
+                if not is_excluded({'infolabels': listitem_jsonrpc.infolabels, 'infoproperties': listitem_jsonrpc.infoproperties}, **filters):
+                    statistics.setdefault(fname, 0)
+                    statistics[fname] += 1
 
             if listitem_jsonrpc.mediatype:
                 mediatypes[listitem_jsonrpc.mediatype] = mediatypes.get(listitem_jsonrpc.mediatype, 0) + 1
@@ -696,9 +684,42 @@ class ListGetFilterDir(Container):
                 seed_names = None
             return (seed_paths, seed_names)
 
+        def _get_stored_random_path():
+            # Dont randomise if only one path to choose
+            total_x = len(paths)
+            if total_x == 1:
+                return 0
+
+            # Dont check randomise prop if none selected
+            if not randomise_prop:
+                return
+
+            prefix = 'SkinVariables.RandomisationTimer'
+
+            # Default to ten minute refresh time if nont selected
+            time_limit = int(randomise_time or 600)
+
+            # Check expiry of previous stored value
+            from jurialmunkey.window import get_property
+            from jurialmunkey.tmdate import get_timestamp, set_timestamp
+            expiry = get_property(f'{randomise_prop}.expiry', prefix=prefix)
+
+            # Get a new random seed value if expired (and make sure we dont get previous value again)
+            if not get_timestamp(expiry, set_int=True):
+                import random
+                previous_x = get_property(f'{randomise_prop}', prefix=prefix)
+                previous_x = int(previous_x) if previous_x else -1
+                x = random.choice([x for x in range(len(paths)) if x != previous_x])
+                get_property(f'{randomise_prop}.expiry', set_property=f'{set_timestamp(time_limit, set_int=True)}', prefix=prefix)
+                get_property(f'{randomise_prop}', set_property=f'{x}', prefix=prefix)
+                return x
+
+            return int(get_property(f'{randomise_prop}', prefix=prefix))
+
         def _get_random_path():
             import random
-            x = random.choice(range(len(paths)))
+            x = _get_stored_random_path()
+            x = random.choice(range(len(paths))) if x is None else x
             return _get_indexed_path(x)
 
         def _get_paths_names_tuple():
@@ -739,8 +760,16 @@ class ListGetFilterDir(Container):
         container_content = f'{max(mediatypes, key=lambda key: mediatypes[key])}s' if mediatypes else ''
         self.add_items(items, container_content=container_content, plugin_category=plugin_category)
 
+        if not statistics:
+            return
 
-class ListGetContainerLabels(Container):
+        window_prop = window_prop or 'Statistics'
+
+        for k, v in statistics.items():
+            set_to_windowprop(v, k, window_prop, window_id)
+
+
+class ListGetContainerLabels(ContainerDirectory):
     def get_directory(
             self, containers, infolabel, numitems=None, thumb=None, label2=None, separator=' / ',
             filter_value=None, filter_operator=None, exclude_value=None, exclude_operator=None,
